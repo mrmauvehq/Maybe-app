@@ -153,36 +153,22 @@
     opts = opts || {};
     if (opts.pdfIntent && text.length > 280) {
       const bodyText = stripTapLine(text);
-      const leadDiv = document.createElement("div");
-      leadDiv.innerHTML = linkify(escT(makeLead(bodyText)));
-      const fullDiv = document.createElement("div");
-      fullDiv.style.display = "none";
-      fullDiv.innerHTML = linkify(escT(bodyText));
-      const linkDiv = document.createElement("div");
-      linkDiv.style.marginTop = "9px";
-      linkDiv.textContent = "Preparing your PDF...";
-      const tog = document.createElement("button");
-      tog.className = "pdfbtn"; tog.textContent = "View full text";
-      tog.onclick = () => {
-        const open = fullDiv.style.display !== "none";
-        fullDiv.style.display = open ? "none" : "block";
-        leadDiv.style.display = open ? "block" : "none";
-        tog.textContent = open ? "View full text" : "Hide full text";
-        $("chatLog").scrollTop = $("chatLog").scrollHeight;
-      };
       el.innerHTML = "";
-      el.appendChild(leadDiv); el.appendChild(fullDiv);
-      el.appendChild(linkDiv); el.appendChild(tog);
+      const linkDiv = document.createElement("div");
+      linkDiv.textContent = "Preparing your PDF...";
+      el.appendChild(linkDiv);
       (async () => {
-        if (!window.PDFLib) {
-          linkDiv.textContent = "The PDF maker could not load just now - tap View full text above.";
-          return;
-        }
         try {
+          if (!window.PDFLib) throw new Error("no pdf lib");
           const url = await makePdfUrl(bodyText);
           linkDiv.innerHTML = 'Here\'s your PDF: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
         } catch (e) {
-          linkDiv.textContent = "The PDF did not render this time - tap View full text above.";
+          el.innerHTML = linkify(escT(bodyText));
+          const b = document.createElement("button");
+          b.className = "pdfbtn"; b.textContent = "Save as PDF";
+          b.onclick = () => exportPdf(bodyText, b);
+          el.appendChild(document.createElement("br"));
+          el.appendChild(b);
         }
         $("chatLog").scrollTop = $("chatLog").scrollHeight;
       })();
