@@ -25,6 +25,13 @@
   .row { display:flex; justify-content:space-between; align-items:center; }
   #err { color:#b00020; font-size:14px; min-height:18px; margin-bottom:8px; }
   .pill { display:inline-block; background:#f3e3ea; color:var(--plum); border-radius:999px; padding:2px 10px; font-size:12px; font-weight:600; }
+  .chatlog { max-height:340px; overflow-y:auto; margin-bottom:10px; }
+  .msg { padding:9px 12px; border-radius:12px; margin-bottom:8px; font-size:15px; line-height:1.45; white-space:pre-wrap; }
+  .msg.me { background:#f3e3ea; margin-left:36px; }
+  .msg.bot { background:var(--soft); margin-right:36px; }
+  .chatrow { display:flex; gap:8px; }
+  .chatrow textarea { flex:1; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:16px; font-family:inherit; resize:none; margin:0; }
+  .chatrow button { width:auto; padding:12px 18px; }
 </style>
 </head>
 <body>
@@ -67,7 +74,16 @@
       <div class="muted">Filed signals in the vault, Qolagio drawer.</div>
     </div>
 
-    <div class="muted" style="text-align:center">Mauve v0 - the door. The Concierge chat arrives in the next phase.</div>
+    <div class="card">
+      <h2>The Concierge</h2>
+      <div class="chatlog" id="chatLog"></div>
+      <div class="chatrow">
+        <textarea id="chatInput" rows="2" placeholder="Ask the Concierge..."></textarea>
+        <button id="chatSend">Send</button>
+      </div>
+    </div>
+
+    <div class="muted" style="text-align:center">Mauve v0 - the door, the desk, and the Concierge.</div>
   </div>
 </div>
 
@@ -105,6 +121,10 @@
       f.explanation + "</span></div>").join("") : '<div class="muted">No open sizing flags.</div>';
     const { count } = await sb.from("trend_signals").select("*", {count: "exact", head: true});
     $("signalCount").textContent = (count ?? 0) + " signals";
+    if (!greeted) {
+      greeted = true;
+      addMsg("bot", "Ask me about the vault - what Moe is costing you, how the sizing failed, what you have filed.");
+    }
   }
 
   $("signIn").onclick = async () => {
@@ -115,6 +135,34 @@
     showDesk();
   };
   $("signOut").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+  const chatHistory = [];
+  let greeted = false;
+  function addMsg(cls, text) {
+    const d = document.createElement("div");
+    d.className = "msg " + cls; d.textContent = text;
+    $("chatLog").appendChild(d);
+    $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    return d;
+  }
+  async function sendChat() {
+    const inp = $("chatInput");
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = "";
+    addMsg("me", text);
+    const wait = addMsg("bot", "Thinking...");
+    const { data, error } = await sb.functions.invoke("concierge", { body: { message: text, history: chatHistory } });
+    let reply;
+    if (error) {
+      reply = "Something went wrong reaching the Concierge.";
+      try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
+    } else if (data && data.error) { reply = data.error; }
+    else { reply = (data && data.reply) || "Empty answer."; }
+    wait.textContent = reply;
+    chatHistory.push({ role: "user", text }, { role: "model", text: reply });
+  }
+  $("chatSend").onclick = sendChat;
   sb.auth.getSession().then(({ data }) => { if (data.session) showDesk(); });
 </script>
 </body>
