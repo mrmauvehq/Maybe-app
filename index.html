@@ -228,113 +228,248 @@
     $("attChip").style.display = "flex";
   };
 
-// Shared Mauve report renderer. Uses a PDFLib-compatible object (browser global or node require).
+// Shared Mauve report renderer v2 - Gia's report layout: big plum title, verdict
+// box, ledger tables (wrapped cells, font-measured widths, rules at row bottoms).
+// Uses a PDFLib-compatible object (browser global or node require).
 async function buildReportPdf(PDFLib, rawText, subtitle) {
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
   const doc = await PDFDocument.create();
   const F = await doc.embedFont(StandardFonts.Helvetica);
   const FB = await doc.embedFont(StandardFonts.HelveticaBold);
   const PLUM = rgb(0.431, 0.165, 0.235), DARK = rgb(0.13, 0.11, 0.12),
-        GREY = rgb(0.42, 0.40, 0.41), LINEC = rgb(0.80, 0.72, 0.74),
-        LIGHT = rgb(0.957, 0.925, 0.933);
+        GREY = rgb(0.42, 0.40, 0.41), LINEC = rgb(0.85, 0.78, 0.80),
+        LIGHT = rgb(0.965, 0.940, 0.949), BOXF = rgb(0.984, 0.973, 0.976);
   const W = 612, H = 792, M = 54, CW = W - 2 * M;
   let page = null, y = 0;
 
   function clean(s) {
     return s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
-            .replace(/[\u2013\u2014]/g, "-").replace(/[^\x00-\xFF]/g, "");
+            .replace(/[\u2013\u2014]/g, "-").replace(/\u2026/g, "...")
+            .replace(/[^\x00-\xFF]/g, "");
   }
+  function plain(s) { return s.replace(/\*\*/g, "").replace(/`/g, "").replace(/\*/g, ""); }
+
+  // Pull a leading "# Title" out as the document title.
+  const rawLines = clean(rawText).split("\n");
+  let title = "MAUVE";
+  for (let k = 0; k < rawLines.length; k++) {
+    const t = rawLines[k].trim();
+    if (!t) continue;
+    if (/^#\s+/.test(t)) { title = plain(t.replace(/^#\s+/, "")).toUpperCase(); rawLines.splice(k, 1); }
+    break;
+  }
+
   function newPage(first) {
     page = doc.addPage([W, H]); y = H - M;
     if (first) {
-      page.drawText("MAUVE", { x: M, y: y - 6, size: 17, font: FB, color: PLUM });
-      y -= 17;
+      let ts = 16.5;
+      while (ts > 11 && FB.widthOfTextAtSize(title, ts) > CW) ts -= 0.5;
+      page.drawText(title, { x: M, y: y - 6, size: ts, font: FB, color: PLUM });
+      y -= 24;
       page.drawText(clean(subtitle), { x: M, y, size: 9, font: F, color: GREY });
-      y -= 9;
+      y -= 10;
       page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.4, color: PLUM });
-      y -= 22;
+      y -= 24;
     }
   }
-  function need(h) { if (y - h < M + 6) newPage(false); }
-  // Tokenize into words with bold flags, honoring **bold** spans.
+  function ensure(h) { if (y - h < M + 8) newPage(false); }
+
+  // Tokenize into words with bold flags, honoring **bold**; backticks and lone
+  // asterisks are stripped. Words longer than maxW are hard-split (nospace).
   function words(text, baseBold) {
     const out = [];
-    const parts = text.split("**");
-    parts.forEach((part, i) => {
+    text.split("**").forEach((part, i) => {
       const bold = baseBold || (i % 2 === 1);
-      part.split(/\s+/).filter(Boolean).forEach(w => out.push({ w, bold }));
+      part.replace(/`/g, "").replace(/\*/g, "").split(/\s+/).filter(Boolean)
+        .forEach(w => out.push({ w, bold, nospace: false }));
     });
     return out;
   }
   function wrapRuns(text, size, maxW, baseBold) {
-    const toks = words(text, baseBold);
+    let toks = words(text, baseBold);
+    // hard-split overlong words
+    const split = [];
+    for (const t of toks) {
+      const fnt = t.bold ? FB : F;
+      if (fnt.widthOfTextAtSize(t.w, size) <= maxW) { split.push(t); continue; }
+      let cur = "", first = true;
+      for (const ch of t.w) {
+        if (cur && fnt.widthOfTextAtSize(cur + ch, size) > maxW) {
+          split.push({ w: cur, bold: t.bold, nospace: !first });
+          first = false; cur = ch;
+        } else cur += ch;
+      }
+      if (cur) split.push({ w: cur, bold: t.bold, nospace: !first });
+    }
+    toks = split;
     const lines = []; let line = [], lw = 0;
     const spaceW = F.widthOfTextAtSize(" ", size);
     for (const t of toks) {
       const fnt = t.bold ? FB : F;
       const ww = fnt.widthOfTextAtSize(t.w, size);
-      if (line.length && lw + spaceW + ww > maxW) { lines.push(line); line = []; lw = 0; }
-      if (line.length) lw += spaceW;
+      const add = (line.length && !t.nospace ? spaceW : 0) + ww;
+      if (line.length && lw + add > maxW) { lines.push(line); line = []; lw = 0; }
+      if (line.length && !t.nospace) lw += spaceW;
       line.push(t); lw += ww;
     }
     if (line.length) lines.push(line);
-    return lines;
+    return lines.length ? lines : [[]];
+  }
+  function lineWidth(line, size) {
+    const spaceW = F.widthOfTextAtSize(" ", size);
+    let w = 0;
+    line.forEach((t, i) => {
+      if (i && !t.nospace) w += spaceW;
+      w += (t.bold ? FB : F).widthOfTextAtSize(t.w, size);
+    });
+    return w;
+  }
+  function drawLine(line, x0, size, color, rightEdge) {
+    let x = rightEdge != null ? rightEdge - lineWidth(line, size) : x0;
+    const spaceW = F.widthOfTextAtSize(" ", size);
+    line.forEach((t, i) => {
+      if (i && !t.nospace) x += spaceW;
+      const fnt = t.bold ? FB : F;
+      page.drawText(t.w, { x, y, size, font: fnt, color: color || DARK });
+      x += fnt.widthOfTextAtSize(t.w, size);
+    });
   }
   function drawPara(text, size, opt) {
     opt = opt || {};
     const indent = opt.indent || 0, lh = size * 1.45, maxW = CW - indent;
     const lines = wrapRuns(text, size, maxW, !!opt.bold);
-    need(lines.length * lh + 2);
-    for (const line of lines) {
-      let x = M + indent;
-      const spaceW = F.widthOfTextAtSize(" ", size);
-      line.forEach((t, i) => {
-        if (i) x += spaceW;
-        const fnt = t.bold ? FB : F;
-        page.drawText(t.w, { x, y, size, font: fnt, color: opt.color || DARK });
-        x += fnt.widthOfTextAtSize(t.w, size);
-      });
-      y -= lh;
+    ensure(lines.length * lh + 2);
+    if (opt.marker) page.drawText(opt.marker, { x: M + 1, y, size, font: FB, color: PLUM });
+    for (const line of lines) { drawLine(line, M + indent, size, opt.color); y -= lh; }
+    y -= (opt.after != null ? opt.after : 5);
+  }
+  function drawVerdict(text) {
+    const size = 10.3, lh = size * 1.45, pad = 10;
+    const lines = wrapRuns(text, size, CW - 2 * pad, false);
+    const bh = lines.length * lh + 2 * pad + size * 0.97 - lh;
+    ensure(bh + 8);
+    const top = y + size * 0.72 + pad;
+    page.drawRectangle({ x: M, y: top - bh, width: CW, height: bh, color: BOXF,
+      borderColor: PLUM, borderWidth: 0.8 });
+    for (const line of lines) { drawLine(line, M + pad, size, DARK); y -= lh; }
+    y = top - bh - 8;
+  }
+  function drawHeading(text, level) {
+    if (level === 2) {
+      ensure(30);
+      y -= 6;
+      drawPara(text.toUpperCase(), 11.5, { bold: true, color: PLUM, after: 5 });
+    } else if (level === 3) {
+      ensure(24); y -= 3;
+      drawPara(text, 10.8, { bold: true, after: 4 });
+    } else {
+      ensure(22); y -= 2;
+      drawPara(text, 10.3, { bold: true, color: PLUM, after: 4 });
     }
-    y -= (opt.after != null ? opt.after : 4);
   }
   function drawTable(rows) {
     const cols = Math.max.apply(null, rows.map(r => r.length));
-    const size = 8.6, lh = 11;
-    const lens = Array(cols).fill(8);
-    rows.forEach(r => r.forEach((c, i) => { lens[i] = Math.max(lens[i], c.replace(/\*\*/g, "").length); }));
-    const tot = lens.reduce((a, b) => a + b, 0);
-    const widths = lens.map(l => Math.max(52, CW * l / tot));
-    rows.forEach((r, ri) => {
-      const cells = [];
+    const size = 8.8, lh = 11.6, padX = 5, padT = 4, padB = 5;
+    const cellText = rows.map(r => { const a = r.slice(); while (a.length < cols) a.push(""); return a.map(c => plain(c)); });
+    const cellBold = rows.map(r => { const a = r.slice(); while (a.length < cols) a.push(""); return a.map(c => /^\*\*[^*]+\*\*$/.test(c.trim())); });
+    // column widths from real font measurement
+    const desired = [], floorW = [];
+    for (let c = 0; c < cols; c++) {
+      let d = 30, fl = 30;
+      cellText.forEach((r, ri) => {
+        const fnt = ri === 0 ? FB : F;
+        d = Math.max(d, Math.min(fnt.widthOfTextAtSize(r[c], size) + 2 * padX, CW * 0.46));
+        r[c].split(/\s+/).forEach(wd => { fl = Math.max(fl, fnt.widthOfTextAtSize(wd, size) + 2 * padX); });
+      });
+      desired.push(d); floorW.push(Math.min(fl, CW * 0.5));
+    }
+    let widths = desired.slice();
+    let sum = widths.reduce((a, b) => a + b, 0);
+    if (sum > CW) {
+      let over = sum - CW;
+      for (let c = 0; c < cols && over > 0; c++) {
+        const room = Math.max(0, widths[c] - floorW[c]);
+        const cut = Math.min(room, over * (widths[c] / sum));
+        widths[c] -= cut; over -= cut;
+      }
+      sum = widths.reduce((a, b) => a + b, 0);
+      if (sum > CW) { const k = CW / sum; widths = widths.map(w => w * k); }
+    } else if (sum < CW) {
+      const extra = CW - sum;
+      widths = widths.map((w, c) => w + extra * (desired[c] / sum));
+    }
+    // repair pass: no column may end below its longest-word floor
+    for (let pass = 0; pass < 4; pass++) {
+      let changed = false;
+      for (let c = 0; c < cols; c++) {
+        if (widths[c] < floorW[c] - 0.01) {
+          const needW = floorW[c] - widths[c];
+          let d = -1, best = 0;
+          for (let j = 0; j < cols; j++) {
+            const room = widths[j] - floorW[j];
+            if (j !== c && room > best) { best = room; d = j; }
+          }
+          if (d < 0) break;
+          const give = Math.min(needW, best);
+          widths[c] += give; widths[d] -= give; changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    const numeric = [];
+    for (let c = 0; c < cols; c++) {
+      const head = cellText[0][c];
+      let numCells = 0, tot = 0;
+      for (let r = 1; r < cellText.length; r++) {
+        const v = cellText[r][c].trim(); if (!v) continue; tot++;
+        if (/^\(?\$?[\d,]+(\.\d+)?\)?%?$/.test(v)) numCells++;
+      }
+      numeric.push(/\(\$\)|\$|variance|amount|total|cost|price/i.test(head) || (tot > 0 && numCells / tot >= 0.5));
+    }
+    function renderRow(r, isHeader) {
+      const wrapped = [];
       let rowLines = 1;
-      for (let i = 0; i < cols; i++) {
-        const c = (r[i] || "").replace(/\*\*/g, "");
-        const wrapped = wrapRuns(c, size, widths[i] - 8, false).map(l => l.map(t => t.w).join(" "));
-        cells.push(wrapped.length ? wrapped : [""]);
-        rowLines = Math.max(rowLines, cells[i].length);
+      for (let c = 0; c < cols; c++) {
+        const wl = wrapRuns(cellText[r][c], size, widths[c] - 2 * padX, isHeader || cellBold[r][c]);
+        wrapped.push(wl); rowLines = Math.max(rowLines, wl.length);
       }
-      const rh = rowLines * lh + 6;
-      need(rh + 2);
-      if (ri === 0) { page.drawRectangle({ x: M, y: y - rowLines * lh - 3, width: CW, height: rowLines * lh + 6, color: LIGHT }); }
+      const rh = rowLines * lh + padT + padB;
+      if (y + size * 0.3 - rh < M + 8) {
+        newPage(false);
+        if (!isHeader && r > 0) renderRow(0, true);
+      }
+      const rowTop = y + size * 0.3;
+      const firstBase = rowTop - padT - size * 0.85;
+      const bottom = rowTop - rh;
+      if (isHeader) page.drawRectangle({ x: M, y: bottom, width: CW, height: rh, color: LIGHT });
       let x = M;
-      for (let i = 0; i < cols; i++) {
-        cells[i].forEach((ln, li) => {
-          page.drawText(ln, { x: x + 4, y: y - li * lh, size, font: ri === 0 ? FB : F, color: DARK });
+      for (let c = 0; c < cols; c++) {
+        wrapped[c].forEach((line, li) => {
+          const keepY = y; y = firstBase - li * lh;
+          if (numeric[c]) drawLine(line, 0, size, DARK, x + widths[c] - padX);
+          else drawLine(line, x + padX, size, DARK);
+          y = keepY;
         });
-        x += widths[i];
+        x += widths[c];
       }
-      y -= rowLines * lh + 3;
-      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: ri === 0 ? 0.9 : 0.4, color: ri === 0 ? PLUM : LINEC });
-      y -= 3;
-    });
-    y -= 6;
+      page.drawLine({ start: { x: M, y: bottom }, end: { x: W - M, y: bottom },
+        thickness: isHeader ? 0.9 : 0.4, color: isHeader ? PLUM : LINEC });
+      y = bottom;
+    }
+    renderRow(0, true);
+    for (let r = 1; r < cellText.length; r++) renderRow(r, false);
+    y -= 9;
   }
 
   newPage(true);
-  const lines = clean(rawText).split("\n");
+  const lines = rawLines;
   let i = 0, para = [];
-  function flushPara() { if (para.length) { drawPara(para.join(" "), 10.5, {}); para = []; } }
+  function flushPara() {
+    if (!para.length) return;
+    const text = para.join(" "); para = [];
+    if (/^\*\*?Verdict:\*\*?/.test(text) || /^Verdict:/.test(text)) drawVerdict(text);
+    else drawPara(text, 10.3, {});
+  }
   while (i < lines.length) {
     const ln = lines[i];
     if (/^\s*\|/.test(ln)) {
@@ -350,12 +485,24 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
     }
     const t = ln.trim();
     if (!t) { flushPara(); i++; continue; }
-    if (/^#{1,3}\s/.test(t)) { flushPara(); drawPara(t.replace(/^#{1,3}\s/, ""), 12.5, { bold: true, color: PLUM, after: 5 }); i++; continue; }
-    if (/^\*\*[^*]+\*\*$/.test(t)) { flushPara(); drawPara(t.replace(/\*\*/g, ""), 11, { bold: true, after: 4 }); i++; continue; }
+    if (/^-{3,}$/.test(t) || /^\*{3,}$/.test(t)) {
+      flushPara();
+      ensure(12); y -= 3;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: LINEC });
+      y -= 9; i++; continue;
+    }
+    const hm = t.match(/^(#{1,6})\s+(.*)$/);
+    if (hm) { flushPara(); drawHeading(plain(hm[2]), Math.min(hm[1].length, 4)); i++; continue; }
+    if (/^\*\*[^*]+\*\*$/.test(t)) { flushPara(); drawPara(plain(t), 10.8, { bold: true, after: 4 }); i++; continue; }
     if (/^[-*]\s+/.test(t) || t.startsWith("\u2022 ")) {
       flushPara();
-      page.drawText("-", { x: M + 2, y, size: 10.5, font: FB, color: PLUM });
-      drawPara(t.replace(/^[-*\u2022]\s+/, ""), 10.5, { indent: 14, after: 3 });
+      drawPara(t.replace(/^[-*\u2022]\s+/, ""), 10.3, { indent: 14, after: 3, marker: "-" });
+      i++; continue;
+    }
+    const nm = t.match(/^(\d+)[.)]\s+(.*)$/);
+    if (nm) {
+      flushPara();
+      drawPara(nm[2], 10.3, { indent: 18, after: 3, marker: nm[1] + "." });
       i++; continue;
     }
     para.push(t); i++;
