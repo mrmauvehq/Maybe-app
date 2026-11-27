@@ -36,6 +36,12 @@
   .msg a { word-break:break-all; }
   .vidbtn { display:block; text-align:center; background:var(--plum); color:#fff !important;
     padding:14px; border-radius:10px; margin-top:10px; font-weight:600; text-decoration:none; }
+  .attachbtn { width:auto; padding:12px 14px; background:#fff; color:var(--plum); border:1px solid var(--line); font-size:15px; }
+  .chip { display:none; align-items:center; gap:8px; background:#f3e3ea; color:var(--plum);
+    border-radius:999px; padding:5px 12px; font-size:13px; font-weight:600; margin-bottom:8px; width:fit-content; }
+  .chip button { width:auto; padding:0 4px; background:none; color:var(--plum); font-size:15px; }
+  .msg img.att { display:block; max-width:100%; border-radius:8px; margin-top:8px; }
+  .msg .attname { font-size:13px; opacity:.75; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -63,10 +69,13 @@
     <div class="card">
       <h2>The Concierge</h2>
       <div class="chatlog" id="chatLog"></div>
+      <div class="chip" id="attChip"><span id="attName"></span><button id="attClear" title="Remove attachment">x</button></div>
       <div class="chatrow">
+        <button class="attachbtn" id="attachBtn" title="Attach a photo or video">Attach</button>
         <textarea id="chatInput" rows="2" placeholder="Ask the Concierge..."></textarea>
         <button id="chatSend">Send</button>
       </div>
+      <input type="file" id="filePick" accept="image/*,video/*" style="display:none">
     </div>
 
     <div class="muted" style="text-align:center">Mauve - the Concierge is the door.</div>
@@ -120,14 +129,62 @@
     el.innerHTML = html;
     $("chatLog").scrollTop = $("chatLog").scrollHeight;
   }
+  let pendingAtt = null; // { mime, data (base64), name, kind, previewUrl }
+  function clearAtt() {
+    pendingAtt = null;
+    $("attChip").style.display = "none";
+    $("filePick").value = "";
+  }
+  $("attClear").onclick = clearAtt;
+  $("attachBtn").onclick = () => $("filePick").click();
+  $("filePick").onchange = async () => {
+    const f = $("filePick").files[0];
+    if (!f) return;
+    const isImg = f.type.startsWith("image/");
+    const isVid = f.type.startsWith("video/");
+    if (!isImg && !isVid) { addMsg("bot", "That file type will not work - send a photo or a video."); return; }
+    if (isVid && f.size > 12 * 1024 * 1024) {
+      addMsg("bot", "That video is too large for the live door (12 MB cap) - trim it or send a shorter clip.");
+      $("filePick").value = ""; return;
+    }
+    let blob = f, mime = f.type;
+    if (isImg && f.size > 1500000) {
+      const bmp = await createImageBitmap(f);
+      const scale = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(bmp.width * scale); cv.height = Math.round(bmp.height * scale);
+      cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+      blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.85));
+      mime = "image/jpeg";
+    }
+    const buf = await blob.arrayBuffer();
+    let bin = ""; const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    pendingAtt = { mime, data: btoa(bin), name: f.name, kind: isImg ? "image" : "video",
+      previewUrl: isImg ? URL.createObjectURL(blob) : null };
+    $("attName").textContent = (isImg ? "Photo: " : "Video: ") + f.name;
+    $("attChip").style.display = "flex";
+  };
+
   async function sendChat() {
     const inp = $("chatInput");
     const text = inp.value.trim();
-    if (!text) return;
+    if (!text && !pendingAtt) return;
     inp.value = "";
-    addMsg("me", text);
-    const wait = addMsg("bot", "Thinking...");
-    const { data, error } = await sb.functions.invoke("concierge", { body: { message: text, history: chatHistory } });
+    const att = pendingAtt; clearAtt();
+    const shown = text || (att && att.kind === "video" ? "(sent a video)" : "(sent a photo)");
+    const bubble = addMsg("me", shown);
+    if (att && att.kind === "image" && att.previewUrl) {
+      const im = document.createElement("img");
+      im.className = "att"; im.src = att.previewUrl; bubble.appendChild(im);
+    } else if (att) {
+      const nm = document.createElement("div");
+      nm.className = "attname"; nm.textContent = att.name; bubble.appendChild(nm);
+    }
+    const wait = addMsg("bot", att ? "Looking..." : "Thinking...");
+    const body = { message: text || "I attached a file - take a look and tell me what you see that matters.", history: chatHistory };
+    if (att) body.attachment = { mime_type: att.mime, data: att.data, name: att.name };
+    const { data, error } = await sb.functions.invoke("concierge", { body });
     let reply;
     if (error) {
       reply = "That took too long - the engine is busy tonight. Give it a moment and ask me again.";
@@ -135,7 +192,7 @@
     } else if (data && data.error) { reply = data.error; }
     else { reply = (data && data.reply) || "Empty answer."; }
     renderBot(wait, reply);
-    chatHistory.push({ role: "user", text }, { role: "model", text: reply });
+    chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
   }
   $("chatSend").onclick = sendChat;
   sb.auth.getSession().then(({ data }) => { if (data.session) showDesk(); });
