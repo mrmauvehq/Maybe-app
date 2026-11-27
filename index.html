@@ -36,7 +36,9 @@
   .msg a { word-break:break-all; }
   .vidbtn { display:block; text-align:center; background:var(--plum); color:#fff !important;
     padding:14px; border-radius:10px; margin-top:10px; font-weight:600; text-decoration:none; }
-  .attachbtn { width:auto; padding:12px 14px; background:#fff; color:var(--plum); border:1px solid var(--line); font-size:15px; }
+  .attachbtn { width:44px; height:44px; flex:none; padding:0; border-radius:50%; background:#fff;
+    color:var(--plum); border:1px solid var(--line); font-size:24px; line-height:1; align-self:flex-end; }
+  .sendbtn { width:44px; height:44px; flex:none; padding:0; border-radius:50%; font-size:19px; align-self:flex-end; }
   .chip { display:none; align-items:center; gap:8px; background:#f3e3ea; color:var(--plum);
     border-radius:999px; padding:5px 12px; font-size:13px; font-weight:600; margin-bottom:8px; width:fit-content; }
   .chip button { width:auto; padding:0 4px; background:none; color:var(--plum); font-size:15px; }
@@ -71,9 +73,9 @@
       <div class="chatlog" id="chatLog"></div>
       <div class="chip" id="attChip"><span id="attName"></span><button id="attClear" title="Remove attachment">x</button></div>
       <div class="chatrow">
-        <button class="attachbtn" id="attachBtn" title="Attach a photo or video">Attach</button>
+        <button class="attachbtn" id="attachBtn" title="Attach a photo or video" aria-label="Attach a photo or video">+</button>
         <textarea id="chatInput" rows="2" placeholder="Ask the Concierge..."></textarea>
-        <button id="chatSend">Send</button>
+        <button class="sendbtn" id="chatSend" title="Send" aria-label="Send">↑</button>
       </div>
       <input type="file" id="filePick" accept="image/*,video/*" style="display:none">
     </div>
