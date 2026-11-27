@@ -212,7 +212,8 @@
         try {
           if (!window.PDFLib) throw new Error("no pdf lib");
           const url = await makePdfUrl(bodyText);
-          linkDiv.innerHTML = 'Here\'s your PDF: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
+          linkDiv.innerHTML = 'Here\'s your PDF: <a href="' + url + '" target="_blank" rel="noopener">Open the report (PDF)</a>';
+          addShareBtn(linkDiv, url);
         } catch (e) {
           el.innerHTML = mdHtml(bodyText);
           const b = document.createElement("button");
@@ -570,12 +571,30 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
   return await doc.save();
 }
 
+  let lastPdf = null;
+  function addShareBtn(el, url) {
+    if (!lastPdf) return;
+    try {
+      const file = new File([lastPdf.blob], lastPdf.fname, { type: "application/pdf" });
+      if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return;
+      const btn = document.createElement("button");
+      btn.className = "pdfbtn"; btn.textContent = "Save / share the PDF";
+      btn.title = "Opens the share sheet - Save to Files, AirDrop, Mail";
+      btn.onclick = async () => {
+        try { await navigator.share({ files: [file], title: lastPdf.fname }); }
+        catch (e) { window.open(url, "_blank"); }
+      };
+      el.appendChild(document.createElement("br"));
+      el.appendChild(btn);
+    } catch (e) {}
+  }
   async function makePdfUrl(text) {
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
     const bytes = await buildReportPdf(window.PDFLib, text, "Concierge report - " + dateStr);
     const blob = new Blob([bytes], { type: "application/pdf" });
     const fname = "mauve-report-" + now.toISOString().slice(0, 10) + ".pdf";
+    lastPdf = { blob: blob, fname: fname };
     let url = URL.createObjectURL(blob);
     try {
       const { data: mem } = await sb.from("brand_members").select("brand_id").limit(1);
@@ -597,7 +616,8 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
     try {
       const url = await makePdfUrl(text);
       const d = addMsg("bot", "");
-      d.innerHTML = 'Your PDF is ready: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
+      d.innerHTML = 'Your PDF is ready: <a href="' + url + '" target="_blank" rel="noopener">Open the report (PDF)</a>';
+      addShareBtn(d, url);
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
     } catch (e) {
       addMsg("bot", "The PDF did not render this time - try again in a moment.");
