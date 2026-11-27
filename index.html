@@ -201,7 +201,7 @@
     const { data, error } = await sb.functions.invoke("concierge", { body: { message: text, history: chatHistory } });
     let reply;
     if (error) {
-      reply = "Something went wrong reaching the Concierge.";
+      reply = "That took too long - the engine is busy tonight. Give it a moment and ask me again.";
       try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
     } else if (data && data.error) { reply = data.error; }
     else { reply = (data && data.reply) || "Empty answer."; }
