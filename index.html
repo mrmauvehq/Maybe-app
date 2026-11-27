@@ -407,7 +407,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
   }
   function drawHeading(text, level) {
     if (level === 2) {
-      ensure(30);
+      ensure(84);
       y -= 6;
       drawPara(text.toUpperCase(), 11.5, { bold: true, color: PLUM, after: 5 });
     } else if (level === 3) {
