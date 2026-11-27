@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mauve</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <style>
   :root { --plum:#6d2e46; --ink:#221a1e; --soft:#f7f2f4; --line:#e4d8dd; }
   * { box-sizing:border-box; }
@@ -36,6 +37,9 @@
   .chatrow button { width:auto; padding:12px 18px; }
   .msg a { color:var(--plum); font-weight:600; }
   .msg a { word-break:break-all; }
+  .pdfbtn { margin-top:9px; padding:5px 13px; font-size:12.5px; font-weight:600; border-radius:999px;
+    background:#fff; color:var(--plum); border:1px solid var(--line); width:auto; }
+  .pdfbtn:disabled { opacity:.55; }
   .vidbtn { display:block; text-align:center; background:var(--plum); color:#fff !important;
     padding:14px; border-radius:10px; margin-top:10px; font-weight:600; text-decoration:none; }
   .attachbtn { width:40px; height:40px; flex:none; padding:0; border-radius:50%; background:transparent;
@@ -138,6 +142,14 @@
       html += '<a class="vidbtn" href="' + m[0] + '" target="_blank" rel="noopener">\u25B6 Watch the video</a>';
     }
     el.innerHTML = html;
+    if (text.length > 280) {
+      const b = document.createElement("button");
+      b.className = "pdfbtn"; b.textContent = "Save as PDF";
+      b.title = "Save this answer as a PDF";
+      b.onclick = () => exportPdf(text, b);
+      el.appendChild(document.createElement("br"));
+      el.appendChild(b);
+    }
     $("chatLog").scrollTop = $("chatLog").scrollHeight;
   }
   let pendingAtt = null; // { mime, data (base64), name, kind, previewUrl }
@@ -176,6 +188,180 @@
     $("attName").textContent = (isImg ? "Photo: " : "Video: ") + f.name;
     $("attChip").style.display = "flex";
   };
+
+// Shared Mauve report renderer. Uses a PDFLib-compatible object (browser global or node require).
+async function buildReportPdf(PDFLib, rawText, subtitle) {
+  const { PDFDocument, StandardFonts, rgb } = PDFLib;
+  const doc = await PDFDocument.create();
+  const F = await doc.embedFont(StandardFonts.Helvetica);
+  const FB = await doc.embedFont(StandardFonts.HelveticaBold);
+  const PLUM = rgb(0.431, 0.165, 0.235), DARK = rgb(0.13, 0.11, 0.12),
+        GREY = rgb(0.42, 0.40, 0.41), LINEC = rgb(0.80, 0.72, 0.74),
+        LIGHT = rgb(0.957, 0.925, 0.933);
+  const W = 612, H = 792, M = 54, CW = W - 2 * M;
+  let page = null, y = 0;
+
+  function clean(s) {
+    return s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+            .replace(/[\u2013\u2014]/g, "-").replace(/[^\x00-\xFF]/g, "");
+  }
+  function newPage(first) {
+    page = doc.addPage([W, H]); y = H - M;
+    if (first) {
+      page.drawText("MAUVE", { x: M, y: y - 6, size: 17, font: FB, color: PLUM });
+      y -= 17;
+      page.drawText(clean(subtitle), { x: M, y, size: 9, font: F, color: GREY });
+      y -= 9;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.4, color: PLUM });
+      y -= 22;
+    }
+  }
+  function need(h) { if (y - h < M + 6) newPage(false); }
+  // Tokenize into words with bold flags, honoring **bold** spans.
+  function words(text, baseBold) {
+    const out = [];
+    const parts = text.split("**");
+    parts.forEach((part, i) => {
+      const bold = baseBold || (i % 2 === 1);
+      part.split(/\s+/).filter(Boolean).forEach(w => out.push({ w, bold }));
+    });
+    return out;
+  }
+  function wrapRuns(text, size, maxW, baseBold) {
+    const toks = words(text, baseBold);
+    const lines = []; let line = [], lw = 0;
+    const spaceW = F.widthOfTextAtSize(" ", size);
+    for (const t of toks) {
+      const fnt = t.bold ? FB : F;
+      const ww = fnt.widthOfTextAtSize(t.w, size);
+      if (line.length && lw + spaceW + ww > maxW) { lines.push(line); line = []; lw = 0; }
+      if (line.length) lw += spaceW;
+      line.push(t); lw += ww;
+    }
+    if (line.length) lines.push(line);
+    return lines;
+  }
+  function drawPara(text, size, opt) {
+    opt = opt || {};
+    const indent = opt.indent || 0, lh = size * 1.45, maxW = CW - indent;
+    const lines = wrapRuns(text, size, maxW, !!opt.bold);
+    need(lines.length * lh + 2);
+    for (const line of lines) {
+      let x = M + indent;
+      const spaceW = F.widthOfTextAtSize(" ", size);
+      line.forEach((t, i) => {
+        if (i) x += spaceW;
+        const fnt = t.bold ? FB : F;
+        page.drawText(t.w, { x, y, size, font: fnt, color: opt.color || DARK });
+        x += fnt.widthOfTextAtSize(t.w, size);
+      });
+      y -= lh;
+    }
+    y -= (opt.after != null ? opt.after : 4);
+  }
+  function drawTable(rows) {
+    const cols = Math.max.apply(null, rows.map(r => r.length));
+    const size = 8.6, lh = 11;
+    const lens = Array(cols).fill(8);
+    rows.forEach(r => r.forEach((c, i) => { lens[i] = Math.max(lens[i], c.replace(/\*\*/g, "").length); }));
+    const tot = lens.reduce((a, b) => a + b, 0);
+    const widths = lens.map(l => Math.max(52, CW * l / tot));
+    rows.forEach((r, ri) => {
+      const cells = [];
+      let rowLines = 1;
+      for (let i = 0; i < cols; i++) {
+        const c = (r[i] || "").replace(/\*\*/g, "");
+        const wrapped = wrapRuns(c, size, widths[i] - 8, false).map(l => l.map(t => t.w).join(" "));
+        cells.push(wrapped.length ? wrapped : [""]);
+        rowLines = Math.max(rowLines, cells[i].length);
+      }
+      const rh = rowLines * lh + 6;
+      need(rh + 2);
+      if (ri === 0) { page.drawRectangle({ x: M, y: y - rowLines * lh - 3, width: CW, height: rowLines * lh + 6, color: LIGHT }); }
+      let x = M;
+      for (let i = 0; i < cols; i++) {
+        cells[i].forEach((ln, li) => {
+          page.drawText(ln, { x: x + 4, y: y - li * lh, size, font: ri === 0 ? FB : F, color: DARK });
+        });
+        x += widths[i];
+      }
+      y -= rowLines * lh + 3;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: ri === 0 ? 0.9 : 0.4, color: ri === 0 ? PLUM : LINEC });
+      y -= 3;
+    });
+    y -= 6;
+  }
+
+  newPage(true);
+  const lines = clean(rawText).split("\n");
+  let i = 0, para = [];
+  function flushPara() { if (para.length) { drawPara(para.join(" "), 10.5, {}); para = []; } }
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (/^\s*\|/.test(ln)) {
+      flushPara();
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        const cells = lines[i].trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+        if (!cells.every(c => /^:?-+:?$/.test(c))) rows.push(cells);
+        i++;
+      }
+      if (rows.length) drawTable(rows);
+      continue;
+    }
+    const t = ln.trim();
+    if (!t) { flushPara(); i++; continue; }
+    if (/^#{1,3}\s/.test(t)) { flushPara(); drawPara(t.replace(/^#{1,3}\s/, ""), 12.5, { bold: true, color: PLUM, after: 5 }); i++; continue; }
+    if (/^\*\*[^*]+\*\*$/.test(t)) { flushPara(); drawPara(t.replace(/\*\*/g, ""), 11, { bold: true, after: 4 }); i++; continue; }
+    if (/^[-*]\s+/.test(t) || t.startsWith("\u2022 ")) {
+      flushPara();
+      page.drawText("-", { x: M + 2, y, size: 10.5, font: FB, color: PLUM });
+      drawPara(t.replace(/^[-*\u2022]\s+/, ""), 10.5, { indent: 14, after: 3 });
+      i++; continue;
+    }
+    para.push(t); i++;
+  }
+  flushPara();
+
+  const pages = doc.getPages();
+  pages.forEach((p, idx) => {
+    p.drawText("Mauve - the Concierge is the door.", { x: M, y: 30, size: 8, font: F, color: GREY });
+    const label = "Page " + (idx + 1) + " of " + pages.length;
+    p.drawText(label, { x: W - M - F.widthOfTextAtSize(label, 8), y: 30, size: 8, font: F, color: GREY });
+  });
+  return await doc.save();
+}
+
+  async function exportPdf(text, btn) {
+    if (!window.PDFLib) { addMsg("bot", "The PDF maker could not load just now - try again in a moment."); return; }
+    const oldLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = "Preparing...";
+    try {
+      const now = new Date();
+      const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+      const bytes = await buildReportPdf(window.PDFLib, text, "Concierge report - " + dateStr);
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const fname = "mauve-report-" + now.toISOString().slice(0, 10) + ".pdf";
+      let url = URL.createObjectURL(blob);
+      try {
+        const { data: mem } = await sb.from("brand_members").select("brand_id").limit(1);
+        if (mem && mem.length) {
+          const path = mem[0].brand_id + "/exports/" + Date.now() + "-" + fname;
+          const up = await sb.storage.from("vault-files").upload(path, blob, { contentType: "application/pdf" });
+          if (!up.error) {
+            const signed = await sb.storage.from("vault-files").createSignedUrl(path, 60 * 60 * 24 * 7);
+            if (signed.data && signed.data.signedUrl) url = signed.data.signedUrl;
+          }
+        }
+      } catch (e) { /* vault copy is best-effort; the download still works */ }
+      const d = addMsg("bot", "");
+      d.innerHTML = 'Your PDF is ready: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    } catch (e) {
+      addMsg("bot", "The PDF did not render this time - try again in a moment.");
+    }
+    btn.disabled = false; btn.textContent = oldLabel;
+  }
 
   async function sendChat() {
     const inp = $("chatInput");
