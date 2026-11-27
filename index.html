@@ -39,6 +39,10 @@
   .attachbtn { width:44px; height:44px; flex:none; padding:0; border-radius:50%; background:#fff;
     color:var(--plum); border:1px solid var(--line); font-size:24px; line-height:1; align-self:flex-end; }
   .sendbtn { width:44px; height:44px; flex:none; padding:0; border-radius:50%; font-size:19px; align-self:flex-end; }
+  .micbtn { width:44px; height:44px; flex:none; padding:0; border-radius:50%; background:#fff;
+    color:var(--plum); border:1px solid var(--line); align-self:flex-end; display:flex; align-items:center; justify-content:center; }
+  .micbtn.rec { background:var(--plum); color:#fff; border-color:var(--plum); }
+  .micbtn svg { width:19px; height:19px; }
   .chip { display:none; align-items:center; gap:8px; background:#f3e3ea; color:var(--plum);
     border-radius:999px; padding:5px 12px; font-size:13px; font-weight:600; margin-bottom:8px; width:fit-content; }
   .chip button { width:auto; padding:0 4px; background:none; color:var(--plum); font-size:15px; }
@@ -75,6 +79,9 @@
       <div class="chatrow">
         <button class="attachbtn" id="attachBtn" title="Attach a photo or video" aria-label="Attach a photo or video">+</button>
         <textarea id="chatInput" rows="2" placeholder="Ask the Concierge..."></textarea>
+        <button class="micbtn" id="micBtn" title="Dictate" aria-label="Dictate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </button>
         <button class="sendbtn" id="chatSend" title="Send" aria-label="Send">↑</button>
       </div>
       <input type="file" id="filePick" accept="image/*,video/*" style="display:none">
@@ -197,6 +204,30 @@
     chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
   }
   $("chatSend").onclick = sendChat;
+
+  let recog = null, listening = false;
+  $("micBtn").onclick = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      addMsg("bot", "Dictation is not available in this browser window - the keyboard's own mic key works too.");
+      return;
+    }
+    if (listening) { recog.stop(); return; }
+    recog = new SR();
+    recog.lang = "en-US";
+    recog.interimResults = true;
+    let base = $("chatInput").value ? $("chatInput").value.replace(/\s*$/, "") + " " : "";
+    recog.onresult = (e) => {
+      let txt = "";
+      for (const r of e.results) txt += r[0].transcript;
+      $("chatInput").value = base + txt;
+    };
+    recog.onend = () => { listening = false; $("micBtn").classList.remove("rec"); };
+    recog.onerror = recog.onend;
+    listening = true;
+    $("micBtn").classList.add("rec");
+    recog.start();
+  };
   sb.auth.getSession().then(({ data }) => { if (data.session) showDesk(); });
 </script>
 </body>
