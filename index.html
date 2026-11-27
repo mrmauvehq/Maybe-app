@@ -583,7 +583,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
         const path = mem[0].brand_id + "/exports/" + Date.now() + "-" + fname;
         const up = await sb.storage.from("vault-files").upload(path, blob, { contentType: "application/pdf" });
         if (!up.error) {
-          const signed = await sb.storage.from("vault-files").createSignedUrl(path, 60 * 60 * 24 * 7);
+          const signed = await sb.storage.from("vault-files").createSignedUrl(path, 60 * 60 * 24 * 7, { download: fname });
           if (signed.data && signed.data.signedUrl) url = signed.data.signedUrl;
         }
       }
