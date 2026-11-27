@@ -54,62 +54,9 @@
     <div class="row">
       <div>
         <h1>MAUVE</h1>
-        <div class="sub" id="whoLine">The Concierge desk</div>
+        <div class="sub" id="whoLine">The Concierge</div>
       </div>
       <button class="ghost" id="signOut">Sign out</button>
-    </div>
-
-    <div class="card">
-      <h2>The Ledger</h2>
-      <div id="invoiceLine" class="muted">Loading...</div>
-      <div class="big" id="moneyTotal"></div>
-      <div id="moneyFlags"></div>
-      <div class="muted" id="ledgerMeta" style="margin-top:8px"></div>
-    </div>
-
-    <div class="card">
-      <h2>The Fitting</h2>
-      <div id="sizingFlags"></div>
-      <div class="muted" id="fittingMeta" style="margin-top:8px"></div>
-    </div>
-
-    <div class="card">
-      <h2>The Archive</h2>
-      <div class="big" id="archiveBig"></div>
-      <div class="muted" id="archiveMeta"></div>
-    </div>
-
-    <div class="card">
-      <h2>Atelier</h2>
-      <div class="muted">Open - nothing filed yet. Production batches, milestones, and shipments live here.</div>
-    </div>
-
-    <div class="card">
-      <h2>Front Row</h2>
-      <div class="big" id="signalCount"></div>
-      <div class="muted">Filed signals in the vault, Qolagio drawer.</div>
-    </div>
-
-    <div class="card">
-      <h2>Editorial</h2>
-      <div class="big" id="editorialBig"></div>
-      <div class="muted">Content assets filed. Campaigns and creators come later.</div>
-    </div>
-
-    <div class="card">
-      <h2>The Return Rail</h2>
-      <div class="muted">Open - nothing filed yet. Returns and chargebacks land here once the store sells.</div>
-    </div>
-
-    <div class="card">
-      <h2>The Reserve</h2>
-      <div class="muted">Open - nothing filed yet. Inventory and sales orders land here.</div>
-    </div>
-
-    <div class="card">
-      <h2>Toile</h2>
-      <div class="big" id="toileBig"></div>
-      <div class="muted">Eval cases - the tests every change must pass.</div>
     </div>
 
     <div class="card">
@@ -121,7 +68,7 @@
       </div>
     </div>
 
-    <div class="muted" style="text-align:center">Mauve v0 - the door, the desk, and the Concierge.</div>
+    <div class="muted" style="text-align:center">Mauve - the Concierge is the door.</div>
   </div>
 </div>
 
@@ -136,40 +83,7 @@
   async function showDesk() {
     $("loginView").style.display = "none";
     $("deskView").style.display = "block";
-    const { data: inv } = await sb.from("invoices")
-      .select("invoice_number, billed_total, status").order("created_at", {ascending: false});
-    if (inv && inv.length) {
-      const i = inv[0];
-      $("invoiceLine").innerHTML = "Invoice " + i.invoice_number + " - billed " + money(i.billed_total) +
-        ' &nbsp;<span class="pill">' + i.status.toUpperCase() + "</span>";
-    }
-    const { data: flags, error } = await sb.from("audit_flags")
-      .select("flag_domain, flag_type, variance_amount, explanation")
-      .is("human_decision", null).order("created_at", {ascending: true});
-    if (error) { $("moneyFlags").innerHTML = '<div class="muted">' + error.message + "</div>"; return; }
-    const mf = flags.filter(f => f.flag_domain === "money");
-    const sf = flags.filter(f => f.flag_domain === "sizing");
-    const total = mf.reduce((s, f) => s + Number(f.variance_amount || 0), 0);
-    $("moneyTotal").textContent = mf.length + " open flags - " + money(total) + " in question";
-    $("moneyFlags").innerHTML = mf.map(f =>
-      '<div class="flag"><span class="amt">' + money(f.variance_amount) + "</span>" +
-      "<b>" + f.flag_type.replace(/_/g, " ") + "</b><br><span class='muted'>" + f.explanation + "</span></div>").join("");
-    $("sizingFlags").innerHTML = sf.length ? sf.map(f =>
-      '<div class="flag"><b>' + f.flag_type.replace(/_/g, " ") + "</b><br><span class='muted'>" +
-      f.explanation + "</span></div>").join("") : '<div class="muted">No open sizing flags.</div>';
-    const { count } = await sb.from("trend_signals").select("*", {count: "exact", head: true});
-    $("signalCount").textContent = (count ?? 0) + " signals";
-    const countOf = async (t) => { const r = await sb.from(t).select("*", {count: "exact", head: true}); return r.count ?? 0; };
-    const [sup, sty, vr, brl, ca, ec, po, ss, sm] = await Promise.all([
-      countOf("suppliers"), countOf("styles"), countOf("style_variants"), countOf("brand_rules"),
-      countOf("content_assets"), countOf("eval_cases"), countOf("purchase_orders"),
-      countOf("spec_sheets"), countOf("sample_measurements")]);
-    $("ledgerMeta").textContent = po + " purchase orders on file.";
-    $("fittingMeta").textContent = ss + " spec sheet - " + sm + " measurements on file.";
-    $("archiveBig").textContent = sup + " suppliers - " + sty + " styles";
-    $("archiveMeta").textContent = vr + " variants - " + brl + " brand rules on file.";
-    $("editorialBig").textContent = ca + " assets";
-    $("toileBig").textContent = ec + " cases";
+    $("loginView").style.display = "none";
     if (!greeted) {
       greeted = true;
       addMsg("bot", "Ask me about the vault - what Moe is costing you, how the sizing failed, what you have filed.");
