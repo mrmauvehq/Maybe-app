@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mauve</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root { --plum:#6d2e46; --ink:#221a1e; --soft:#f7f2f4; --line:#e4d8dd; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, "Segoe UI", Roboto, sans-serif; background:var(--soft); color:var(--ink); }
+  .wrap { max-width:640px; margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:26px; margin:8px 0 2px; color:var(--plum); letter-spacing:.5px; }
+  .sub { color:#7a6a70; font-size:14px; margin-bottom:20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 4px; color:var(--plum); text-transform:uppercase; letter-spacing:1px; }
+  .big { font-size:22px; font-weight:600; margin:4px 0; }
+  .flag { border-top:1px solid var(--line); padding:10px 0; font-size:14px; }
+  .flag:first-of-type { border-top:none; }
+  .amt { float:right; font-weight:600; }
+  .muted { color:#7a6a70; font-size:13px; }
+  input { width:100%; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:16px; margin-bottom:10px; }
+  button { width:100%; padding:12px; border:none; border-radius:10px; background:var(--plum); color:#fff; font-size:16px; cursor:pointer; }
+  button.ghost { background:none; color:var(--plum); border:1px solid var(--line); width:auto; padding:8px 14px; font-size:14px; }
+  .row { display:flex; justify-content:space-between; align-items:center; }
+  #err { color:#b00020; font-size:14px; min-height:18px; margin-bottom:8px; }
+  .pill { display:inline-block; background:#f3e3ea; color:var(--plum); border-radius:999px; padding:2px 10px; font-size:12px; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="loginView">
+    <h1>MAUVE</h1>
+    <div class="sub">Your house. Sign in to open the vault.</div>
+    <div class="card">
+      <div id="err"></div>
+      <input id="email" type="email" value="mrmauvehq@gmail.com" autocomplete="username">
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="signIn">Sign in</button>
+    </div>
+  </div>
+
+  <div id="deskView" style="display:none">
+    <div class="row">
+      <div>
+        <h1>MAUVE</h1>
+        <div class="sub" id="whoLine">The Concierge desk</div>
+      </div>
+      <button class="ghost" id="signOut">Sign out</button>
+    </div>
+
+    <div class="card">
+      <h2>The Ledger</h2>
+      <div id="invoiceLine" class="muted">Loading...</div>
+      <div class="big" id="moneyTotal"></div>
+      <div id="moneyFlags"></div>
+    </div>
+
+    <div class="card">
+      <h2>The Fitting</h2>
+      <div id="sizingFlags"></div>
+    </div>
+
+    <div class="card">
+      <h2>Intelligence</h2>
+      <div class="big" id="signalCount"></div>
+      <div class="muted">Filed signals in the vault, Qolagio drawer.</div>
+    </div>
+
+    <div class="muted" style="text-align:center">Mauve v0 - the door. The Concierge chat arrives in the next phase.</div>
+  </div>
+</div>
+
+<script>
+  const sb = window.supabase.createClient(
+    "https://fkehodlaxbdtpeifkzcg.supabase.co",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZWhvZGxheGJkdHBlaWZremNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU3MjkzNjQsImV4cCI6MjExMTMwNTM2NH0.YOaeb58PqQPUgLfEeg4dghO_kz_JR_bON3O38dL3p2A"
+  );
+  const $ = id => document.getElementById(id);
+  const money = n => "$" + Number(n).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+  async function showDesk() {
+    $("loginView").style.display = "none";
+    $("deskView").style.display = "block";
+    const { data: inv } = await sb.from("invoices")
+      .select("invoice_number, billed_total, status").order("created_at", {ascending: false});
+    if (inv && inv.length) {
+      const i = inv[0];
+      $("invoiceLine").innerHTML = "Invoice " + i.invoice_number + " - billed " + money(i.billed_total) +
+        ' &nbsp;<span class="pill">' + i.status.toUpperCase() + "</span>";
+    }
+    const { data: flags, error } = await sb.from("audit_flags")
+      .select("flag_domain, flag_type, variance_amount, explanation")
+      .is("human_decision", null).order("created_at", {ascending: true});
+    if (error) { $("moneyFlags").innerHTML = '<div class="muted">' + error.message + "</div>"; return; }
+    const mf = flags.filter(f => f.flag_domain === "money");
+    const sf = flags.filter(f => f.flag_domain === "sizing");
+    const total = mf.reduce((s, f) => s + Number(f.variance_amount || 0), 0);
+    $("moneyTotal").textContent = mf.length + " open flags - " + money(total) + " in question";
+    $("moneyFlags").innerHTML = mf.map(f =>
+      '<div class="flag"><span class="amt">' + money(f.variance_amount) + "</span>" +
+      "<b>" + f.flag_type.replace(/_/g, " ") + "</b><br><span class='muted'>" + f.explanation + "</span></div>").join("");
+    $("sizingFlags").innerHTML = sf.length ? sf.map(f =>
+      '<div class="flag"><b>' + f.flag_type.replace(/_/g, " ") + "</b><br><span class='muted'>" +
+      f.explanation + "</span></div>").join("") : '<div class="muted">No open sizing flags.</div>';
+    const { count } = await sb.from("trend_signals").select("*", {count: "exact", head: true});
+    $("signalCount").textContent = (count ?? 0) + " signals";
+  }
+
+  $("signIn").onclick = async () => {
+    $("err").textContent = "";
+    const { error } = await sb.auth.signInWithPassword({
+      email: $("email").value.trim(), password: $("password").value });
+    if (error) { $("err").textContent = error.message; return; }
+    showDesk();
+  };
+  $("signOut").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+  sb.auth.getSession().then(({ data }) => { if (data.session) showDesk(); });
+</script>
+</body>
+</html>
