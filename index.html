@@ -133,10 +133,63 @@
     $("chatLog").scrollTop = $("chatLog").scrollHeight;
     return d;
   }
-  function renderBot(el, text) {
-    const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    let html = esc.replace(/https:\/\/[^\s<]+/g, (u) =>
+  function escT(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function linkify(h) {
+    return h.replace(/https:\/\/[^\s<]+/g, (u) =>
       '<a href="' + u + '" target="_blank" rel="noopener">' + u + "</a>");
+  }
+  function stripTapLine(t) {
+    return t.replace(/\n*\s*Tap \*\*Save as PDF\*\*[^\n]*$/i, "")
+            .replace(/\n*\s*Tap Save as PDF[^\n]*$/i, "").trim();
+  }
+  function makeLead(t) {
+    const blocks = t.split(/\n\s*\n/).filter((b) => b.trim().length);
+    let lead = blocks[0] || t;
+    if (lead.trim().startsWith("#") && blocks.length > 1) lead = lead + "\n\n" + blocks[1];
+    if (lead.length > 340) lead = lead.slice(0, 340).replace(/\s+\S*$/, "") + "...";
+    return lead;
+  }
+  function renderBot(el, text, opts) {
+    opts = opts || {};
+    if (opts.pdfIntent && text.length > 280) {
+      const bodyText = stripTapLine(text);
+      const leadDiv = document.createElement("div");
+      leadDiv.innerHTML = linkify(escT(makeLead(bodyText)));
+      const fullDiv = document.createElement("div");
+      fullDiv.style.display = "none";
+      fullDiv.innerHTML = linkify(escT(bodyText));
+      const linkDiv = document.createElement("div");
+      linkDiv.style.marginTop = "9px";
+      linkDiv.textContent = "Preparing your PDF...";
+      const tog = document.createElement("button");
+      tog.className = "pdfbtn"; tog.textContent = "View full text";
+      tog.onclick = () => {
+        const open = fullDiv.style.display !== "none";
+        fullDiv.style.display = open ? "none" : "block";
+        leadDiv.style.display = open ? "block" : "none";
+        tog.textContent = open ? "View full text" : "Hide full text";
+        $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      };
+      el.innerHTML = "";
+      el.appendChild(leadDiv); el.appendChild(fullDiv);
+      el.appendChild(linkDiv); el.appendChild(tog);
+      (async () => {
+        if (!window.PDFLib) {
+          linkDiv.textContent = "The PDF maker could not load just now - tap View full text above.";
+          return;
+        }
+        try {
+          const url = await makePdfUrl(bodyText);
+          linkDiv.innerHTML = 'Here\'s your PDF: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
+        } catch (e) {
+          linkDiv.textContent = "The PDF did not render this time - tap View full text above.";
+        }
+        $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      })();
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      return;
+    }
+    let html = linkify(escT(text));
     const m = text.match(/https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_-]+[^\s<]*/);
     if (m) {
       html += '<a class="vidbtn" href="' + m[0] + '" target="_blank" rel="noopener">\u25B6 Watch the video</a>';
@@ -332,28 +385,32 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
   return await doc.save();
 }
 
+  async function makePdfUrl(text) {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    const bytes = await buildReportPdf(window.PDFLib, text, "Concierge report - " + dateStr);
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const fname = "mauve-report-" + now.toISOString().slice(0, 10) + ".pdf";
+    let url = URL.createObjectURL(blob);
+    try {
+      const { data: mem } = await sb.from("brand_members").select("brand_id").limit(1);
+      if (mem && mem.length) {
+        const path = mem[0].brand_id + "/exports/" + Date.now() + "-" + fname;
+        const up = await sb.storage.from("vault-files").upload(path, blob, { contentType: "application/pdf" });
+        if (!up.error) {
+          const signed = await sb.storage.from("vault-files").createSignedUrl(path, 60 * 60 * 24 * 7);
+          if (signed.data && signed.data.signedUrl) url = signed.data.signedUrl;
+        }
+      }
+    } catch (e) { /* vault copy is best-effort; the download still works */ }
+    return url;
+  }
   async function exportPdf(text, btn) {
     if (!window.PDFLib) { addMsg("bot", "The PDF maker could not load just now - try again in a moment."); return; }
     const oldLabel = btn.textContent;
     btn.disabled = true; btn.textContent = "Preparing...";
     try {
-      const now = new Date();
-      const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-      const bytes = await buildReportPdf(window.PDFLib, text, "Concierge report - " + dateStr);
-      const blob = new Blob([bytes], { type: "application/pdf" });
-      const fname = "mauve-report-" + now.toISOString().slice(0, 10) + ".pdf";
-      let url = URL.createObjectURL(blob);
-      try {
-        const { data: mem } = await sb.from("brand_members").select("brand_id").limit(1);
-        if (mem && mem.length) {
-          const path = mem[0].brand_id + "/exports/" + Date.now() + "-" + fname;
-          const up = await sb.storage.from("vault-files").upload(path, blob, { contentType: "application/pdf" });
-          if (!up.error) {
-            const signed = await sb.storage.from("vault-files").createSignedUrl(path, 60 * 60 * 24 * 7);
-            if (signed.data && signed.data.signedUrl) url = signed.data.signedUrl;
-          }
-        }
-      } catch (e) { /* vault copy is best-effort; the download still works */ }
+      const url = await makePdfUrl(text);
       const d = addMsg("bot", "");
       d.innerHTML = 'Your PDF is ready: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
@@ -388,7 +445,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
     } else if (data && data.error) { reply = data.error; }
     else { reply = (data && data.reply) || "Empty answer."; }
-    renderBot(wait, reply);
+    renderBot(wait, reply, { pdfIntent: /\bpdf\b/i.test(text) });
     chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
   }
   $("chatSend").onclick = sendChat;
