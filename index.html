@@ -445,7 +445,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
     } else if (data && data.error) { reply = data.error; }
     else { reply = (data && data.reply) || "Empty answer."; }
-    renderBot(wait, reply, { pdfIntent: /\bpdf\b/i.test(text) });
+    renderBot(wait, reply, { pdfIntent: /\b(pdf|report|write[-\s]?up|brief|memo|document)\b/i.test(text) });
     chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
   }
   $("chatSend").onclick = sendChat;
