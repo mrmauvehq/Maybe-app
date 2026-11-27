@@ -61,17 +61,52 @@
       <div id="invoiceLine" class="muted">Loading...</div>
       <div class="big" id="moneyTotal"></div>
       <div id="moneyFlags"></div>
+      <div class="muted" id="ledgerMeta" style="margin-top:8px"></div>
     </div>
 
     <div class="card">
       <h2>The Fitting</h2>
       <div id="sizingFlags"></div>
+      <div class="muted" id="fittingMeta" style="margin-top:8px"></div>
     </div>
 
     <div class="card">
-      <h2>Intelligence</h2>
+      <h2>The Archive</h2>
+      <div class="big" id="archiveBig"></div>
+      <div class="muted" id="archiveMeta"></div>
+    </div>
+
+    <div class="card">
+      <h2>Atelier</h2>
+      <div class="muted">Open - nothing filed yet. Production batches, milestones, and shipments live here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Front Row</h2>
       <div class="big" id="signalCount"></div>
       <div class="muted">Filed signals in the vault, Qolagio drawer.</div>
+    </div>
+
+    <div class="card">
+      <h2>Editorial</h2>
+      <div class="big" id="editorialBig"></div>
+      <div class="muted">Content assets filed. Campaigns and creators come later.</div>
+    </div>
+
+    <div class="card">
+      <h2>The Return Rail</h2>
+      <div class="muted">Open - nothing filed yet. Returns and chargebacks land here once the store sells.</div>
+    </div>
+
+    <div class="card">
+      <h2>The Reserve</h2>
+      <div class="muted">Open - nothing filed yet. Inventory and sales orders land here.</div>
+    </div>
+
+    <div class="card">
+      <h2>Toile</h2>
+      <div class="big" id="toileBig"></div>
+      <div class="muted">Eval cases - the tests every change must pass.</div>
     </div>
 
     <div class="card">
@@ -121,6 +156,17 @@
       f.explanation + "</span></div>").join("") : '<div class="muted">No open sizing flags.</div>';
     const { count } = await sb.from("trend_signals").select("*", {count: "exact", head: true});
     $("signalCount").textContent = (count ?? 0) + " signals";
+    const countOf = async (t) => { const r = await sb.from(t).select("*", {count: "exact", head: true}); return r.count ?? 0; };
+    const [sup, sty, vr, brl, ca, ec, po, ss, sm] = await Promise.all([
+      countOf("suppliers"), countOf("styles"), countOf("style_variants"), countOf("brand_rules"),
+      countOf("content_assets"), countOf("eval_cases"), countOf("purchase_orders"),
+      countOf("spec_sheets"), countOf("sample_measurements")]);
+    $("ledgerMeta").textContent = po + " purchase orders on file.";
+    $("fittingMeta").textContent = ss + " spec sheet - " + sm + " measurements on file.";
+    $("archiveBig").textContent = sup + " suppliers - " + sty + " styles";
+    $("archiveMeta").textContent = vr + " variants - " + brl + " brand rules on file.";
+    $("editorialBig").textContent = ca + " assets";
+    $("toileBig").textContent = ec + " cases";
     if (!greeted) {
       greeted = true;
       addMsg("bot", "Ask me about the vault - what Moe is costing you, how the sizing failed, what you have filed.");
