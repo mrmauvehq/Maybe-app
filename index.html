@@ -37,6 +37,16 @@
   .chatrow button { width:auto; padding:12px 18px; }
   .msg a { color:var(--plum); font-weight:600; }
   .msg a { word-break:break-all; }
+  .msg .mdh { font-weight:700; color:var(--plum); margin:8px 0 3px; }
+  .msg .mdh3 { font-weight:700; margin:7px 0 2px; }
+  .msg .mdp { margin:2px 0; }
+  .msg .mdb { margin:2px 0 2px 10px; }
+  .msg .mdsp { height:7px; }
+  .msg .mdrule { border-top:1px solid #d8c6cd; margin:8px 0; }
+  .msg .mdtw { overflow-x:auto; margin:6px 0; }
+  .msg table.mdt { border-collapse:collapse; font-size:12.5px; }
+  .msg table.mdt th, .msg table.mdt td { border:1px solid #d8c6cd; padding:3px 6px; text-align:left; }
+  .msg table.mdt th { background:#f6eef1; color:var(--plum); }
   .pdfbtn { margin-top:9px; padding:5px 13px; font-size:12.5px; font-weight:600; border-radius:999px;
     background:#fff; color:var(--plum); border:1px solid var(--line); width:auto; }
   .pdfbtn:disabled { opacity:.55; }
@@ -138,6 +148,47 @@
     return h.replace(/https:\/\/[^\s<]+/g, (u) =>
       '<a href="' + u + '" target="_blank" rel="noopener">' + u + "</a>");
   }
+  function mdInline(s) {
+    let h = escT(s);
+    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/`([^`]+)`/g, "$1");
+    h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
+    return linkify(h);
+  }
+  function mdHtml(text) {
+    const lines = String(text).split("\n");
+    let out = "", i = 0;
+    while (i < lines.length) {
+      const ln = lines[i];
+      if (/^\s*\|/.test(ln)) {
+        const rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) {
+          const cells = lines[i].trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+          if (!cells.every(c => /^:?-+:?$/.test(c))) rows.push(cells);
+          i++;
+        }
+        if (rows.length) {
+          out += '<div class="mdtw"><table class="mdt">';
+          rows.forEach((r, ri) => {
+            out += "<tr>" + r.map(c => (ri === 0 ? "<th>" : "<td>") + mdInline(c) + (ri === 0 ? "</th>" : "</td>")).join("") + "</tr>";
+          });
+          out += "</table></div>";
+        }
+        continue;
+      }
+      const t = ln.trim();
+      i++;
+      if (!t) { out += '<div class="mdsp"></div>'; continue; }
+      if (/^-{3,}$/.test(t) || /^\*{3,}$/.test(t)) { out += '<div class="mdrule"></div>'; continue; }
+      const hm = t.match(/^(#{1,4})\s+(.*)$/);
+      if (hm) { out += '<div class="' + (hm[1].length <= 2 ? "mdh" : "mdh3") + '">' + mdInline(hm[2].replace(/\*\*/g, "")) + "</div>"; continue; }
+      if (/^[-*]\s+/.test(t) || t.startsWith("\u2022 ")) { out += '<div class="mdb">&bull;&nbsp;' + mdInline(t.replace(/^[-*\u2022]\s+/, "")) + "</div>"; continue; }
+      const nm = t.match(/^(\d+)[.)]\s+(.*)$/);
+      if (nm) { out += '<div class="mdb">' + nm[1] + ".&nbsp;" + mdInline(nm[2]) + "</div>"; continue; }
+      out += '<div class="mdp">' + mdInline(t) + "</div>";
+    }
+    return out;
+  }
   function stripTapLine(t) {
     return t.replace(/\n*\s*Tap \*\*Save as PDF\*\*[^\n]*$/i, "")
             .replace(/\n*\s*Tap Save as PDF[^\n]*$/i, "").trim();
@@ -163,7 +214,7 @@
           const url = await makePdfUrl(bodyText);
           linkDiv.innerHTML = 'Here\'s your PDF: <a href="' + url + '" target="_blank" rel="noopener">Open / save the report (PDF)</a>';
         } catch (e) {
-          el.innerHTML = linkify(escT(bodyText));
+          el.innerHTML = mdHtml(bodyText);
           const b = document.createElement("button");
           b.className = "pdfbtn"; b.textContent = "Save as PDF";
           b.onclick = () => exportPdf(bodyText, b);
@@ -175,7 +226,7 @@
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
       return;
     }
-    let html = linkify(escT(text));
+    let html = mdHtml(text);
     const m = text.match(/https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_-]+[^\s<]*/);
     if (m) {
       html += '<a class="vidbtn" href="' + m[0] + '" target="_blank" rel="noopener">\u25B6 Watch the video</a>';
@@ -360,10 +411,10 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       y -= 6;
       drawPara(text.toUpperCase(), 11.5, { bold: true, color: PLUM, after: 5 });
     } else if (level === 3) {
-      ensure(24); y -= 3;
+      ensure(96); y -= 3;
       drawPara(text, 10.8, { bold: true, after: 4 });
     } else {
-      ensure(22); y -= 2;
+      ensure(88); y -= 2;
       drawPara(text, 10.3, { bold: true, color: PLUM, after: 4 });
     }
   }
@@ -493,7 +544,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
     }
     const hm = t.match(/^(#{1,6})\s+(.*)$/);
     if (hm) { flushPara(); drawHeading(plain(hm[2]), Math.min(hm[1].length, 4)); i++; continue; }
-    if (/^\*\*[^*]+\*\*$/.test(t)) { flushPara(); drawPara(plain(t), 10.8, { bold: true, after: 4 }); i++; continue; }
+    if (/^\*\*[^*]+\*\*$/.test(t)) { flushPara(); ensure(90); drawPara(plain(t), 10.8, { bold: true, after: 4 }); i++; continue; }
     if (/^[-*]\s+/.test(t) || t.startsWith("\u2022 ")) {
       flushPara();
       drawPara(t.replace(/^[-*\u2022]\s+/, ""), 10.3, { indent: 14, after: 3, marker: "-" });
@@ -502,6 +553,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
     const nm = t.match(/^(\d+)[.)]\s+(.*)$/);
     if (nm) {
       flushPara();
+      ensure(120);
       drawPara(nm[2], 10.3, { indent: 18, after: 3, marker: nm[1] + "." });
       i++; continue;
     }
