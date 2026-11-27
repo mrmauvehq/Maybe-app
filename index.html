@@ -32,6 +32,9 @@
   .chatrow { display:flex; gap:8px; }
   .chatrow textarea { flex:1; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:16px; font-family:inherit; resize:none; margin:0; }
   .chatrow button { width:auto; padding:12px 18px; }
+  .msg a { color:var(--plum); font-weight:600; }
+  .vid { margin-top:10px; border-radius:10px; overflow:hidden; }
+  .vid iframe { width:100%; aspect-ratio:16/9; border:0; display:block; background:#000; }
 </style>
 </head>
 <body>
@@ -191,6 +194,18 @@
     $("chatLog").scrollTop = $("chatLog").scrollHeight;
     return d;
   }
+  function renderBot(el, text) {
+    const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let html = esc.replace(/https:\/\/[^\s<]+/g, (u) =>
+      '<a href="' + u + '" target="_blank" rel="noopener">' + u + "</a>");
+    const m = text.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/);
+    if (m) {
+      html += '<div class="vid"><iframe src="https://drive.google.com/file/d/' + m[1] +
+        '/preview" allow="autoplay; fullscreen" allowfullscreen></iframe></div>';
+    }
+    el.innerHTML = html;
+    $("chatLog").scrollTop = $("chatLog").scrollHeight;
+  }
   async function sendChat() {
     const inp = $("chatInput");
     const text = inp.value.trim();
@@ -205,7 +220,7 @@
       try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
     } else if (data && data.error) { reply = data.error; }
     else { reply = (data && data.reply) || "Empty answer."; }
-    wait.textContent = reply;
+    renderBot(wait, reply);
     chatHistory.push({ role: "user", text }, { role: "model", text: reply });
   }
   $("chatSend").onclick = sendChat;
