@@ -171,6 +171,7 @@
     try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch (e) {}
   }
   let mailboxBusy = false;
+  const inFlight = new Set();
   async function checkMailbox() {
     let pend = loadPending();
     const fresh = pend.filter((p) => Date.now() - (p.ts || 0) < 15 * 60 * 1000);
@@ -179,6 +180,15 @@
     mailboxBusy = true;
     try {
       for (const p of pend.slice()) {
+        if (inFlight.has(p.id)) continue;
+        // Already answered in this thread (arrived directly, or an older
+        // copy of the same question): clear the entry, never stack a copy.
+        const answered = chatHistory.some((h, i) => h.role === "user" && h.text === p.q
+          && chatHistory[i + 1] && chatHistory[i + 1].role === "model");
+        if (answered) {
+          savePending(loadPending().filter((x) => x.id !== p.id));
+          continue;
+        }
         const { data } = await sb.from("concierge_mailbox")
           .select("status, reply").eq("request_id", p.id).limit(1);
         const row = data && data[0];
@@ -699,7 +709,10 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       : String(Date.now()) + "-" + Math.random().toString(16).slice(2));
     const body = { message: text || "I attached a file - take a look and tell me what you see that matters.", history: chatHistory, request_id: requestId };
     if (att) body.attachment = { mime_type: att.mime, data: att.data, name: att.name };
-    const pend0 = loadPending(); pend0.push({ id: requestId, q: shown, ts: Date.now() }); savePending(pend0);
+    inFlight.add(requestId);
+    // A re-ask supersedes any still-waiting copy of the same question.
+    const pend0 = loadPending().filter((x) => x.q !== shown);
+    pend0.push({ id: requestId, q: shown, ts: Date.now() }); savePending(pend0);
     const { data, error } = await sb.functions.invoke("concierge", { body });
     let reply = null, delivered = false;
     if (error) {
@@ -724,6 +737,7 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       savePending(loadPending().filter((x) => x.id !== requestId));
       saveThread();
     }
+    inFlight.delete(requestId);
   }
   $("chatSend").onclick = sendChat;
 
