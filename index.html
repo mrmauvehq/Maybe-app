@@ -121,7 +121,22 @@
     $("loginView").style.display = "none";
     if (!greeted) {
       greeted = true;
-      addMsg("bot", "Welcome to Mauve. I'm the Concierge - the house's memory, its eyes on the market, and a partner at your desk, from invoices to campaigns. Ask, and I'll pull it.");
+      let restored = false;
+      try {
+        const saved = JSON.parse(localStorage.getItem(THREAD_KEY) || "[]");
+        if (saved.length) {
+          restored = true;
+          for (const h of saved) {
+            chatHistory.push(h);
+            if (h.role === "user") addMsg("me", h.text);
+            else { const el = addMsg("bot", ""); renderBot(el, h.text, {}); }
+          }
+        }
+      } catch (e) {}
+      if (!restored) {
+        addMsg("bot", "Welcome to Mauve. I'm the Concierge - the house's memory, its eyes on the market, and a partner at your desk, from invoices to campaigns. Ask, and I'll pull it.");
+      }
+      checkMailbox();
     }
   }
 
@@ -143,6 +158,44 @@
     $("chatLog").scrollTop = $("chatLog").scrollHeight;
     return d;
   }
+  // Thread + mailbox: the conversation survives leaving the page, and a
+  // finished answer waits in the vault (concierge_mailbox) for the return.
+  const THREAD_KEY = "mauve_thread_v1", PENDING_KEY = "mauve_pending_v1";
+  function saveThread() {
+    try { localStorage.setItem(THREAD_KEY, JSON.stringify(chatHistory.slice(-40))); } catch (e) {}
+  }
+  function loadPending() {
+    try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "[]"); } catch (e) { return []; }
+  }
+  function savePending(p) {
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch (e) {}
+  }
+  let mailboxBusy = false;
+  async function checkMailbox() {
+    let pend = loadPending();
+    const fresh = pend.filter((p) => Date.now() - (p.ts || 0) < 15 * 60 * 1000);
+    if (fresh.length !== pend.length) { savePending(fresh); pend = fresh; }
+    if (!pend.length || mailboxBusy) return;
+    mailboxBusy = true;
+    try {
+      for (const p of pend.slice()) {
+        const { data } = await sb.from("concierge_mailbox")
+          .select("status, reply").eq("request_id", p.id).limit(1);
+        const row = data && data[0];
+        if (row && (row.status === "done" || row.status === "error") && row.reply) {
+          const el = addMsg("bot", "");
+          renderBot(el, row.reply, {});
+          chatHistory.push({ role: "user", text: p.q }, { role: "model", text: row.reply });
+          savePending(loadPending().filter((x) => x.id !== p.id));
+        }
+      }
+      saveThread();
+    } catch (e) { /* the next return tries again */ }
+    mailboxBusy = false;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkMailbox();
+  });
   function escT(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
   function linkify(h) {
     return h.replace(/https:\/\/[^\s<]+/g, (u) =>
@@ -642,17 +695,35 @@ async function buildReportPdf(PDFLib, rawText, subtitle) {
       nm.className = "attname"; nm.textContent = att.name; bubble.appendChild(nm);
     }
     const wait = addMsg("bot", att ? "Looking..." : "Thinking...");
-    const body = { message: text || "I attached a file - take a look and tell me what you see that matters.", history: chatHistory };
+    const requestId = (crypto.randomUUID ? crypto.randomUUID()
+      : String(Date.now()) + "-" + Math.random().toString(16).slice(2));
+    const body = { message: text || "I attached a file - take a look and tell me what you see that matters.", history: chatHistory, request_id: requestId };
     if (att) body.attachment = { mime_type: att.mime, data: att.data, name: att.name };
+    const pend0 = loadPending(); pend0.push({ id: requestId, q: shown, ts: Date.now() }); savePending(pend0);
     const { data, error } = await sb.functions.invoke("concierge", { body });
-    let reply;
+    let reply = null, delivered = false;
     if (error) {
-      reply = "That took too long - the engine is busy tonight. Give it a moment and ask me again.";
-      try { const b = await error.context.json(); if (b && b.error) reply = b.error; } catch (e) {}
-    } else if (data && data.error) { reply = data.error; }
-    else { reply = (data && data.reply) || "Empty answer."; }
+      // The connection may have dropped while the Concierge finished -
+      // check the mailbox before calling it a failure.
+      try {
+        const { data: rows } = await sb.from("concierge_mailbox")
+          .select("status, reply").eq("request_id", requestId).limit(1);
+        const row = rows && rows[0];
+        if (row && row.status === "done" && row.reply) { reply = row.reply; delivered = true; }
+      } catch (e) {}
+      if (!delivered) {
+        // Still cooking server-side: it stays in the pending list and
+        // checkMailbox delivers it when the page is seen again.
+        reply = "That answer is still on its way - it will be waiting here when you come back.";
+      }
+    } else if (data && data.error) { reply = data.error; delivered = true; }
+    else { reply = (data && data.reply) || "Empty answer."; delivered = true; }
     renderBot(wait, reply, { pdfIntent: /\b(pdf|report|write[-\s]?up|brief|memo|document)\b/i.test(text) });
-    chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
+    if (delivered) {
+      chatHistory.push({ role: "user", text: shown }, { role: "model", text: reply });
+      savePending(loadPending().filter((x) => x.id !== requestId));
+      saveThread();
+    }
   }
   $("chatSend").onclick = sendChat;
 
